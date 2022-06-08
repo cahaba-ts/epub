@@ -26,6 +26,7 @@ Basic usage:
 package epub
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -174,10 +175,10 @@ func NewEpub(title string) *Epub {
 // and must be unique among all CSS files. If the same filename is used more
 // than once, FilenameAlreadyUsedError will be returned. The internal filename is
 // optional; if no filename is provided, one will be generated.
-func (e *Epub) AddCSS(source string, internalFilename string) (string, error) {
+func (e *Epub) SetCSS(source string) (string, error) {
 	e.Lock()
 	defer e.Unlock()
-	return e.addCSS(source, internalFilename)
+	return e.addCSS(source, "main.css")
 }
 
 func (e *Epub) addCSS(source string, internalFilename string) (string, error) {
@@ -217,30 +218,18 @@ func (e *Epub) AddImage(source string, imageFilename string) (string, error) {
 	defer e.Unlock()
 	return addMedia(e.Client, source, imageFilename, imageFileFormat, ImageFolderName, e.images)
 }
-
-// AddVideo adds an video to the EPUB and returns a relative path to the video
-// file that can be used in EPUB sections in the format:
-// ../VideoFolderName/internalFilename
-//
-// The video source should either be a URL, a path to a local file, or an embedded data URL; in any
-// case, the video file will be retrieved and stored in the EPUB.
-//
-// The internal filename will be used when storing the video file in the EPUB
-// and must be unique among all video files. If the same filename is used more
-// than once, FilenameAlreadyUsedError will be returned. The internal filename is
-// optional; if no filename is provided, one will be generated.
-func (e *Epub) AddVideo(source string, videoFilename string) (string, error) {
+func (e *Epub) AddImageFolder(source string) (map[string]string, error) {
 	e.Lock()
 	defer e.Unlock()
-	return addMedia(e.Client, source, videoFilename, videoFileFormat, VideoFolderName, e.videos)
+	m := make(map[string]string)
+	return m, errors.New("TODO")
 }
 
 // AddSection adds a new section (chapter, etc) to the EPUB and returns a
 // relative path to the section that can be used from another section (for
 // links).
 //
-// The body must be valid XHTML that will go between the <body> tags of the
-// section XHTML file. The content will not be validated.
+// The body must be valid Markdown. The content will not be validated.
 //
 // The title will be used for the table of contents. The section will be shown
 // in the table of contents in the same order it was added to the EPUB. The
@@ -254,29 +243,32 @@ func (e *Epub) AddVideo(source string, videoFilename string) (string, error) {
 //
 // The internal path to an already-added CSS file (as returned by AddCSS) to be
 // used for the section is optional.
-func (e *Epub) AddSection(body string, sectionTitle string, internalFilename string, internalCSSPath string) (string, error) {
+func (e *Epub) AddIntroduction(body string, sectionTitle string) (string, error) {
 	e.Lock()
 	defer e.Unlock()
-	return e.addSection(body, sectionTitle, internalFilename, internalCSSPath)
+	return e.addSection(body, sectionTitle)
+}
+func (e *Epub) AddChapter(body string, sectionTitle string) (string, error) {
+	e.Lock()
+	defer e.Unlock()
+	return e.addSection(body, sectionTitle)
+}
+func (e *Epub) AddPostscript(body string, sectionTitle string) (string, error) {
+	e.Lock()
+	defer e.Unlock()
+	return e.addSection(body, sectionTitle)
 }
 
-func (e *Epub) addSection(body string, sectionTitle string, internalFilename string, internalCSSPath string) (string, error) {
+func (e *Epub) addSection(body string, sectionTitle string) (string, error) {
 	// Generate a filename if one isn't provided
-	if internalFilename == "" {
-		index := 1
-		for internalFilename == "" {
-			internalFilename = fmt.Sprintf(sectionFileFormat, index)
-			for _, section := range e.sections {
-				if section.filename == internalFilename {
-					internalFilename, index = "", index+1
-					break
-				}
-			}
-		}
-	} else {
+	index := 1
+	internalFilename := ""
+	for internalFilename == "" {
+		internalFilename = fmt.Sprintf(sectionFileFormat, index)
 		for _, section := range e.sections {
 			if section.filename == internalFilename {
-				return "", &FilenameAlreadyUsedError{Filename: internalFilename}
+				internalFilename, index = "", index+1
+				break
 			}
 		}
 	}
@@ -284,10 +276,6 @@ func (e *Epub) addSection(body string, sectionTitle string, internalFilename str
 	x := newXhtml(body)
 	x.setTitle(sectionTitle)
 	x.setXmlnsEpub(xmlnsEpub)
-
-	if internalCSSPath != "" {
-		x.setCSS(internalCSSPath)
-	}
 
 	s := epubSection{
 		filename: internalFilename,
