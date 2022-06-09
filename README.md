@@ -13,7 +13,7 @@ the express purpose of building epubs with certain qualities.
 - Automatically converts markdown files
 - Add Images Folder
 
-For an example of actual usage, see https://github.com/cahaba-ts/volume
+For an example of actual usage, see https://github.com/cahaba-ts/cahaba
 
 ### Contributions
 
