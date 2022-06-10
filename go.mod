@@ -1,4 +1,4 @@
-module github.com/cahaba-ts/go-epub
+module github.com/cahaba-ts/epub
 
 go 1.18
 
@@ -8,4 +8,6 @@ require (
 	github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
 )
 
-require github.com/gomarkdown/markdown v0.0.0-20220607163217-45f7c050e2d1 // indirect
+require (
+	github.com/yuin/goldmark v1.4.12 // indirect
+)

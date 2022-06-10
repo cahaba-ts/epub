@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bmaupin/go-epub/internal/storage"
+	"github.com/cahaba-ts/epub/internal/storage"
 	"github.com/gofrs/uuid"
 )
 
@@ -932,7 +932,7 @@ func validateEpub(t testing.TB, epubFilename string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-func writeAndExtractEpub(t testing.TB, e *Epub, epubFilename string) string {
+func writeAndExtractEpub(t testing.TB, e *Book, epubFilename string) string {
 	tempDir := uuid.Must(uuid.NewV4()).String()
 	err := filesystem.Mkdir(tempDir, 0777)
 	if err != nil {

@@ -1,0 +1,30 @@
+Non-Chapter Variables
+    Title: Book Title
+    Description: Book Description
+    Stylesheet: CSS Path
+    CoverImage: Path to Cover image
+    Cover: Basename of Cover image
+    URN: UUID thing
+    Author: Author name
+    Publisher: Publisher Name (Optional)
+    ReleaseDate: 2006-01-02 (Optional)
+    Files: All files, images + assets + sections
+        ID: Base Filename
+        Path: Path inside EPUB
+        MediaType: Media Type (application/xhtml+xml)
+        Properties: Special properties (cover-image, nav)
+    Sections: The XHTML files in reading order
+        Ref: Name of ID of File
+    Chapters: List of Chapters (Introductions, Chapters, Postscripts)
+        NavPoint: 2-index "navPoint-%s"
+        ID: 1 indexed chapter number
+        Title: Name of Chapter
+        Path: Path inside EPUB
+        Type: introduction, chapter, or postscript
+
+Chapter Variables
+    BookTitle: Book Title
+    Title: Chapter Title
+    Stylesheet: CSS Path
+    ID: Unique ID for Chapter
+    Content: HTML content

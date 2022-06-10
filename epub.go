@@ -26,12 +26,13 @@ Basic usage:
 package epub
 
 import (
-	"errors"
+	"archive/zip"
+	"bytes"
+	"embed"
 	"fmt"
+	"io"
 	"io/fs"
-	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,8 +40,12 @@ import (
 	// TODO: Eventually this should include the major version (e.g. github.com/gofrs/uuid/v3) but that would break
 	// compatibility with Go < 1.9 (https://github.com/golang/go/wiki/Modules#semantic-import-versioning)
 	"github.com/gofrs/uuid"
-	"github.com/vincent-petithory/dataurl"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
+
+//go:embed tmpl/*
+var tmpl embed.FS
 
 // FilenameAlreadyUsedError is thrown by AddCSS, AddFont, AddImage, or AddSection
 // if the same filename is used more than once.
@@ -63,423 +68,265 @@ func (e *FileRetrievalError) Error() string {
 	return fmt.Sprintf("Error retrieving %q from source: %+v", e.Source, e.Err)
 }
 
-// Folder names used for resources inside the EPUB
 const (
-	CSSFolderName   = "css"
-	FontFolderName  = "fonts"
-	ImageFolderName = "images"
-	VideoFolderName = "videos"
-)
-
-const (
-	cssFileFormat          = "css%04d%s"
-	defaultCoverBody       = `<img src="%s" alt="Cover Image" />`
-	defaultCoverCSSContent = `body {
-  background-color: #FFFFFF;
-  margin-bottom: 0px;
-  margin-left: 0px;
-  margin-right: 0px;
-  margin-top: 0px;
-  text-align: center;
-}
-img {
-  max-height: 100%;
-  max-width: 100%;
-}
-`
-	defaultCoverCSSFilename   = "cover.css"
-	defaultCoverCSSSource     = "cover.css"
-	defaultCoverImgFormat     = "cover%s"
-	defaultCoverXhtmlFilename = "cover.xhtml"
-	defaultEpubLang           = "en"
-	fontFileFormat            = "font%04d%s"
-	imageFileFormat           = "image%04d%s"
-	videoFileFormat           = "video%04d%s"
-	sectionFileFormat         = "section%04d.xhtml"
-	urnUUIDPrefix             = "urn:uuid:"
+	urnUUIDPrefix = "urn:uuid:"
 )
 
 // Epub implements an EPUB file.
-type Epub struct {
+type Book struct {
 	sync.Mutex
-	*http.Client
-	author string
-	cover  *epubCover
-	// The key is the css filename, the value is the css source
-	css map[string]string
-	// The key is the font filename, the value is the font source
-	fonts      map[string]string
-	identifier string
+	file *zip.Writer
+	buf  *bytes.Buffer
+
+	md   goldmark.Markdown
+	exts []goldmark.Extender
+
 	// The key is the image filename, the value is the image source
-	images map[string]string
-	// The key is the video filename, the value is the video source
-	videos map[string]string
-	// Language
-	lang string
-	// Description
-	desc string
-	// Page progression direction
-	ppd string
-	// The package file (package.opf)
-	pkg      *pkg
-	sections []epubSection
-	title    string
-	// Table of contents
-	toc *toc
+	imageLookup map[string]string
+	assetLookup map[string]string
+
+	sections [3][]epubSection
+	chapters [3][]string
+
+	args *bookArgs
 }
 
-type epubCover struct {
-	cssFilename   string
-	cssTempFile   string
-	imageFilename string
-	xhtmlFilename string
+type bookArgs struct {
+	Title       string
+	Description string
+	Stylesheet  string
+	CoverImage  string
+	Cover       string
+	URN         string
+	Author      string
+	Publisher   string
+	ReleaseDate string
+	Files       []bookFile
+	Sections    []bookSection
+	Chapters    []bookChapter
 }
-
+type bookFile struct {
+	ID         string
+	Path       string
+	MediaType  string
+	Properties string
+}
+type bookSection struct {
+	Ref string
+}
+type bookChapter struct {
+	NavPoint string
+	ID       string
+	Title    string
+	Path     string
+	Type     string
+}
 type epubSection struct {
-	filename string
-	xhtml    *xhtml
+	title string
+	parts []*xhtml
 }
 
-// NewEpub returns a new Epub.
-func NewEpub(title string) *Epub {
-	e := &Epub{}
-	e.cover = &epubCover{
-		cssFilename:   "",
-		cssTempFile:   "",
-		imageFilename: "",
-		xhtmlFilename: "",
+// NewBook returns a new Epub.
+func NewBook(title string) *Book {
+	e := &Book{
+		args: &bookArgs{
+			Title:      title,
+			CoverImage: "../images/defaultcover.png",
+			Cover:      "defaultcover.png",
+			URN:        urnUUIDPrefix + uuid.Must(uuid.NewV4()).String(),
+		},
+		buf: &bytes.Buffer{},
+		exts: []goldmark.Extender{
+			extension.Table,
+			extension.Strikethrough,
+			extension.DefinitionList,
+		},
 	}
-	e.Client = http.DefaultClient
-	e.css = make(map[string]string)
-	e.fonts = make(map[string]string)
+	e.file = zip.NewWriter(e.buf)
+
 	e.images = make(map[string]string)
-	e.videos = make(map[string]string)
-	e.pkg = newPackage()
-	e.toc = newToc()
-	// Set minimal required attributes
-	e.SetIdentifier(urnUUIDPrefix + uuid.Must(uuid.NewV4()).String())
-	e.SetLang(defaultEpubLang)
-	e.SetTitle(title)
+	e.imageLookup = make(map[string]string)
+
+	e.assets = make(map[string]string)
+	e.assetLookup = make(map[string]string)
 
 	return e
 }
 
-// AddCSS adds a CSS file to the EPUB and returns a relative path to the CSS
-// file that can be used in EPUB sections in the format:
-// ../CSSFolderName/internalFilename
-//
-// The CSS source should either be a URL, a path to a local file, or an embedded data URL; in any
-// case, the CSS file will be retrieved and stored in the EPUB.
-//
-// The internal filename will be used when storing the CSS file in the EPUB
-// and must be unique among all CSS files. If the same filename is used more
-// than once, FilenameAlreadyUsedError will be returned. The internal filename is
-// optional; if no filename is provided, one will be generated.
-func (e *Epub) SetCSS(source string) (string, error) {
-	e.Lock()
-	defer e.Unlock()
-	return e.addCSS(source, "main.css")
+// SetCSS will set the CSS file for the book. It is not
+// recommended to call this more than once for a book.
+func (e *Book) SetCSS(source string) error {
+	return e.addFile("css/main.css", source, "text/css")
 }
 
-func (e *Epub) addCSS(source string, internalFilename string) (string, error) {
-	return addMedia(e.Client, source, internalFilename, cssFileFormat, CSSFolderName, e.css)
-}
-
-// AddFont adds a font file to the EPUB and returns a relative path to the font
-// file that can be used in EPUB sections in the format:
-// ../FontFolderName/internalFilename
-//
-// The font source should either be a URL, a path to a local file, or an embedded data URL; in any
-// case, the font file will be retrieved and stored in the EPUB.
-//
-// The internal filename will be used when storing the font file in the EPUB
-// and must be unique among all font files. If the same filename is used more
-// than once, FilenameAlreadyUsedError will be returned. The internal filename is
-// optional; if no filename is provided, one will be generated.
-func (e *Epub) AddFont(source string, internalFilename string) (string, error) {
-	e.Lock()
-	defer e.Unlock()
-	return addMedia(e.Client, source, internalFilename, fontFileFormat, FontFolderName, e.fonts)
-}
-
-// AddImage adds an image to the EPUB and returns a relative path to the image
-// file that can be used in EPUB sections in the format:
-// ../ImageFolderName/internalFilename
-//
-// The image source should either be a URL, a path to a local file, or an embedded data URL; in any
-// case, the image file will be retrieved and stored in the EPUB.
-//
-// The internal filename will be used when storing the image file in the EPUB
-// and must be unique among all image files. If the same filename is used more
-// than once, FilenameAlreadyUsedError will be returned. The internal filename is
-// optional; if no filename is provided, one will be generated.
-func (e *Epub) AddImage(source string, imageFilename string) (string, error) {
-	e.Lock()
-	defer e.Unlock()
-	return addMedia(e.Client, source, imageFilename, imageFileFormat, ImageFolderName, e.images)
-}
-func (e *Epub) AddImageFolder(source string) (map[string]string, error) {
-	e.Lock()
-	defer e.Unlock()
-	m := make(map[string]string)
-	return m, errors.New("TODO")
-}
-
-// AddSection adds a new section (chapter, etc) to the EPUB and returns a
-// relative path to the section that can be used from another section (for
-// links).
-//
-// The body must be valid Markdown. The content will not be validated.
-//
-// The title will be used for the table of contents. The section will be shown
-// in the table of contents in the same order it was added to the EPUB. The
-// title is optional; if no title is provided, the section will not be added to
-// the table of contents.
-//
-// The internal filename will be used when storing the section file in the EPUB
-// and must be unique among all section files. If the same filename is used more
-// than once, FilenameAlreadyUsedError will be returned. The internal filename is
-// optional; if no filename is provided, one will be generated.
-//
-// The internal path to an already-added CSS file (as returned by AddCSS) to be
-// used for the section is optional.
-func (e *Epub) AddIntroduction(body string, sectionTitle string) (string, error) {
-	e.Lock()
-	defer e.Unlock()
-	return e.addSection(body, sectionTitle)
-}
-func (e *Epub) AddChapter(body string, sectionTitle string) (string, error) {
-	e.Lock()
-	defer e.Unlock()
-	return e.addSection(body, sectionTitle)
-}
-func (e *Epub) AddPostscript(body string, sectionTitle string) (string, error) {
-	e.Lock()
-	defer e.Unlock()
-	return e.addSection(body, sectionTitle)
-}
-
-func (e *Epub) addSection(body string, sectionTitle string) (string, error) {
-	// Generate a filename if one isn't provided
-	index := 1
-	internalFilename := ""
-	for internalFilename == "" {
-		internalFilename = fmt.Sprintf(sectionFileFormat, index)
-		for _, section := range e.sections {
-			if section.filename == internalFilename {
-				internalFilename, index = "", index+1
-				break
-			}
-		}
-	}
-
-	x := newXhtml(body)
-	x.setTitle(sectionTitle)
-	x.setXmlnsEpub(xmlnsEpub)
-
-	s := epubSection{
-		filename: internalFilename,
-		xhtml:    x,
-	}
-	e.sections = append(e.sections, s)
-
-	return internalFilename, nil
-}
-
-// Author returns the author of the EPUB.
-func (e *Epub) Author() string {
-	return e.author
-}
-
-// Identifier returns the unique identifier of the EPUB.
-func (e *Epub) Identifier() string {
-	return e.identifier
-}
-
-// Lang returns the language of the EPUB.
-func (e *Epub) Lang() string {
-	return e.lang
-}
-
-// Description returns the description of the EPUB.
-func (e *Epub) Description() string {
-	return e.desc
-}
-
-// Ppd returns the page progression direction of the EPUB.
-func (e *Epub) Ppd() string {
-	return e.ppd
-}
-
-// SetAuthor sets the author of the EPUB.
-func (e *Epub) SetAuthor(author string) {
-	e.Lock()
-	defer e.Unlock()
-	e.author = author
-	e.pkg.setAuthor(author)
-}
-
-// SetCover sets the cover page for the EPUB using the provided image source and
-// optional CSS.
-//
-// The internal path to an already-added image file (as returned by AddImage) is
-// required.
-//
-// The internal path to an already-added CSS file (as returned by AddCSS) to be
-// used for the cover is optional. If the CSS path isn't provided, default CSS
-// will be used.
-func (e *Epub) SetCover(internalImagePath string, internalCSSPath string) {
-	e.Lock()
-	defer e.Unlock()
-	// If a cover already exists
-	if e.cover.xhtmlFilename != "" {
-		// Remove the xhtml file
-		for i, section := range e.sections {
-			if section.filename == e.cover.xhtmlFilename {
-				e.sections = append(e.sections[:i], e.sections[i+1:]...)
-				break
-			}
-		}
-
-		// Remove the image
-		delete(e.images, e.cover.imageFilename)
-
-		// Remove the CSS
-		delete(e.css, e.cover.cssFilename)
-
-		if e.cover.cssTempFile != "" {
-			os.Remove(e.cover.cssTempFile)
-		}
-	}
-
-	e.cover.imageFilename = filepath.Base(internalImagePath)
-	e.pkg.setCover(e.cover.imageFilename)
-
-	// Use default cover stylesheet if one isn't provided
-	if internalCSSPath == "" {
-		// Encode the default CSS
-		e.cover.cssTempFile = dataurl.EncodeBytes([]byte(defaultCoverCSSContent))
-		var err error
-		internalCSSPath, err = e.addCSS(e.cover.cssTempFile, defaultCoverCSSFilename)
-		// If that doesn't work, generate a filename
-		if _, ok := err.(*FilenameAlreadyUsedError); ok {
-			coverCSSFilename := fmt.Sprintf(
-				cssFileFormat,
-				len(e.css)+1,
-				".css",
-			)
-
-			internalCSSPath, err = e.addCSS(e.cover.cssTempFile, coverCSSFilename)
-			if _, ok := err.(*FilenameAlreadyUsedError); ok {
-				// This shouldn't cause an error
-				panic(fmt.Sprintf("Error adding default cover CSS file: %s", err))
-			}
-		}
-		if err != nil {
-			if _, ok := err.(*FilenameAlreadyUsedError); !ok {
-				panic(fmt.Sprintf("DEBUG %+v", err))
-			}
-		}
-	}
-	e.cover.cssFilename = filepath.Base(internalCSSPath)
-
-	coverBody := fmt.Sprintf(defaultCoverBody, internalImagePath)
-	// Title won't be used since the cover won't be added to the TOC
-	// First try to use the default cover filename
-	coverPath, err := e.addSection(coverBody, "", defaultCoverXhtmlFilename, internalCSSPath)
-	// If that doesn't work, generate a filename
-	if _, ok := err.(*FilenameAlreadyUsedError); ok {
-		coverPath, err = e.addSection(coverBody, "", "", internalCSSPath)
-		if _, ok := err.(*FilenameAlreadyUsedError); ok {
-			// This shouldn't cause an error since we're not specifying a filename
-			panic(fmt.Sprintf("Error adding default cover XHTML file: %s", err))
-		}
-	}
-	e.cover.xhtmlFilename = filepath.Base(coverPath)
-}
-
-// SetIdentifier sets the unique identifier of the EPUB, such as a UUID, DOI,
-// ISBN or ISSN. If no identifier is set, a UUID will be automatically
-// generated.
-func (e *Epub) SetIdentifier(identifier string) {
-	e.Lock()
-	defer e.Unlock()
-	e.identifier = identifier
-	e.pkg.setIdentifier(identifier)
-	e.toc.setIdentifier(identifier)
-}
-
-// SetLang sets the language of the EPUB.
-func (e *Epub) SetLang(lang string) {
-	e.Lock()
-	defer e.Unlock()
-	e.lang = lang
-	e.pkg.setLang(lang)
-}
-
-// SetDescription sets the description of the EPUB.
-func (e *Epub) SetDescription(desc string) {
-	e.Lock()
-	defer e.Unlock()
-	e.desc = desc
-	e.pkg.setDescription(desc)
-}
-
-// SetPpd sets the page progression direction of the EPUB.
-func (e *Epub) SetPpd(direction string) {
-	e.Lock()
-	defer e.Unlock()
-	e.ppd = direction
-	e.pkg.setPpd(direction)
-}
-
-// SetTitle sets the title of the EPUB.
-func (e *Epub) SetTitle(title string) {
-	e.Lock()
-	defer e.Unlock()
-	e.title = title
-	e.pkg.setTitle(title)
-	e.toc.setTitle(title)
-}
-
-// Title returns the title of the EPUB.
-func (e *Epub) Title() string {
-	return e.title
-}
-
-// Add a media file to the EPUB and return the path relative to the EPUB section
-// files
-func addMedia(client *http.Client, source string, internalFilename string, mediaFileFormat string, mediaFolderName string, mediaMap map[string]string) (string, error) {
-	err := grabber{client}.checkMedia(source)
+func (e *Book) SetCover(source string) error {
+	ext := filepath.Ext(source)
+	err := e.addFile("images/cover"+ext, source, ImageMediaTypes[ext])
 	if err != nil {
-		return "", &FileRetrievalError{
-			Source: source,
-			Err:    err,
+		return err
+	}
+	e.args.Files[len(e.args.Files)-1].Properties = "cover-image"
+}
+
+func (e *Book) AddAsset(source, filename, mediaType string) error {
+	e.Lock()
+	e.assetLookup[filename] = "../assets/" + filename
+	e.Unlock()
+	return e.addFile("assets/"+filename, source, mediaType)
+}
+
+var ImageMediaTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".svg":  "image/svg+xml",
+	".webp": "image/webp",
+	".jxl":  "image/jxl",
+	".gif":  "image/gif",
+	".heif": "image/heif",
+	".avif": "image/avif",
+}
+
+func (e *Book) AddImage(source, filename string) error {
+	mediaType := ImageMediaTypes[filepath.Ext(source)]
+	e.Lock()
+	e.imageLookup[filename] = "../images/" + filename
+	e.Unlock()
+	return e.addFile("images/"+filename, source, mediaType)
+}
+
+func (e *Book) AddImageFolder(source string) error {
+	return filepath.Walk(source, func(path string, info fs.FileInfo, _ error) error {
+		if info.IsDir() {
+			return nil
 		}
-	}
-	if internalFilename == "" {
-		// If a filename isn't provided, use the filename from the source
-		internalFilename = filepath.Base(source)
-		_, ok := mediaMap[internalFilename]
-		// if filename is too long, invalid or already used, try to generate a unique filename
-		if len(internalFilename) > 255 || !fs.ValidPath(internalFilename) || ok {
-			internalFilename = fmt.Sprintf(
-				mediaFileFormat,
-				len(mediaMap)+1,
-				strings.ToLower(filepath.Ext(source)),
-			)
-		}
-	}
+		name := strings.TrimPrefix(strings.TrimPrefix(path, source), "/")
+		err := e.AddImage(path, name)
+		return err
+	})
+}
 
-	if _, ok := mediaMap[internalFilename]; ok {
-		return "", &FilenameAlreadyUsedError{Filename: internalFilename}
+func (e *Book) addFile(zipPath, filePath, mediaType string) error {
+	e.Lock()
+	defer e.Unlock()
+	w, err := e.file.Create("EPUB/" + zipPath)
+	if err != nil {
+		return err
 	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(w, f)
+	if err != io.EOF {
+		return err
+	}
+	f.Close()
+	e.args.Files = append(e.args.Files, bookFile{
+		ID:        filepath.Base(zipPath),
+		Path:      zipPath,
+		MediaType: mediaType,
+	})
 
-	mediaMap[internalFilename] = source
+	return nil
+}
 
-	return path.Join(
-		"..",
-		mediaFolderName,
-		internalFilename,
-	), nil
+func (e *Book) LookupImage(imageFilename string) (string, bool) {
+	a, b := e.imageLookup[imageFilename]
+	return a, b
+}
+func (e *Book) LookupAsset(assetFilename string) (string, bool) {
+	a, b := e.assetLookup[assetFilename]
+	return a, b
+}
+
+func (e *Book) AddIntroductionMD(title string, body string) error {
+	e.Lock()
+	content, err := e.renderMarkdown(body)
+	e.Unlock()
+	if err != nil {
+		return err
+	}
+	return e.AddIntroductionHTML(title, content)
+}
+func (e *Book) AddIntroductionHTML(title string, body []string) error {
+	return e.addSection(0, title, body)
+}
+func (e *Book) AddChapterMD(title, body string) error {
+	e.Lock()
+	content, err := e.renderMarkdown(body)
+	e.Unlock()
+	if err != nil {
+		return err
+	}
+	return e.AddChapterHTML(title, content)
+}
+func (e *Book) AddChapterHTML(title string, body []string) error {
+	return e.addSection(1, title, body)
+}
+func (e *Book) AddPostscriptMD(title, body string) error {
+	e.Lock()
+	content, err := e.renderMarkdown(body)
+	e.Unlock()
+	if err != nil {
+		return err
+	}
+	return e.AddPostscriptHTML(title, content)
+}
+func (e *Book) AddPostscriptHTML(title string, body []string) error {
+	return e.addSection(2, title, body)
+}
+
+func (e *Book) addSection(priority int, title string, bodies []string) error {
+	e.Lock()
+	defer e.Unlock()
+	s := epubSection{
+		title: title,
+	}
+	for _, body := range bodies {
+		x := newXhtml(body)
+		x.setTitle(title)
+		x.setXmlnsEpub(xmlnsEpub)
+		s.parts = append(s.parts, x)
+	}
+	e.sections[priority] = append(e.sections[priority], s)
+
+	return nil
+}
+
+func (e *Book) Title() string {
+	return e.args.Title
+}
+func (e *Book) SetTitle(t string) {
+	e.args.Title = t
+}
+func (e *Book) Author() string {
+	return e.args.Author
+}
+func (e *Book) SetAuthor(author string) {
+	e.args.Author = author
+}
+func (e *Book) Description() string {
+	return e.args.Description
+}
+func (e *Book) SetDescription(d string) {
+	e.args.Description = d
+}
+func (e *Book) Publisher() string {
+	return e.args.Publisher
+}
+func (e *Book) SetPublisher(pub string) {
+	e.args.Publisher = pub
+}
+func (e *Book) ReleaseDate() string {
+	return e.args.ReleaseDate
+}
+func (e *Book) SetReleaseDate(t string) {
+	e.args.ReleaseDate = t
+}
+func (e *Book) Identifier() string {
+	return e.args.URN
+}
+func (e *Book) SetIdentifier(id string) {
+	e.args.URN = id
 }

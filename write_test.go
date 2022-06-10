@@ -40,7 +40,7 @@ func TestWriteToErrors(t *testing.T) {
 	})
 }
 
-func testWriteToErrors(t *testing.T, e *Epub, adder func(string, string) (string, error), name string) {
+func testWriteToErrors(t *testing.T, e *Book, adder func(string, string) (string, error), name string) {
 	// Copy testdata to temp file
 	data, err := os.Open(filepath.Join("testdata", name))
 	if err != nil {

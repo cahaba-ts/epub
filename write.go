@@ -53,7 +53,7 @@ const (
 )
 
 // WriteTo the dest io.Writer. The return value is the number of bytes written. Any error encountered during the write is also returned.
-func (e *Epub) WriteTo(dst io.Writer) (int64, error) {
+func (e *Book) WriteTo(dst io.Writer) (int64, error) {
 	e.Lock()
 	defer e.Unlock()
 	tempDir := uuid.Must(uuid.NewV4()).String()
@@ -126,7 +126,7 @@ func (e *Epub) WriteTo(dst io.Writer) (int64, error) {
 // Write writes the EPUB file. The destination path must be the full path to
 // the resulting file, including filename and extension.
 // The result is always writen to the local filesystem even if the underlying storage is in memory.
-func (e *Epub) Write(destFilePath string) error {
+func (e *Book) Write(destFilePath string) error {
 
 	f, err := os.Create(destFilePath)
 	if err != nil {
@@ -196,14 +196,14 @@ func writeContainerFile(rootEpubDir string) {
 
 // Write the CSS files to the temporary directory and add them to the package
 // file
-func (e *Epub) writeCSSFiles(rootEpubDir string) error {
+func (e *Book) writeCSSFiles(rootEpubDir string) error {
 	err := e.writeMedia(rootEpubDir, e.css, CSSFolderName)
 	if err != nil {
 		return err
 	}
 
 	// Clean up the cover temp file if one was created
-	os.Remove(e.cover.cssTempFile)
+	//os.Remove(e.cover.cssTempFile)
 
 	return nil
 }
@@ -223,7 +223,7 @@ func (wc *writeCounter) Write(p []byte) (int, error) {
 
 // Write the EPUB file itself by zipping up everything from a temp directory
 // The return value is the number of bytes written. Any error encountered during the write is also returned.
-func (e *Epub) writeEpub(rootEpubDir string, dst io.Writer) (int64, error) {
+func (e *Book) writeEpub(rootEpubDir string, dst io.Writer) (int64, error) {
 	counter := &writeCounter{}
 	teeWriter := io.MultiWriter(counter, dst)
 
@@ -321,22 +321,22 @@ func (e *Epub) writeEpub(rootEpubDir string, dst io.Writer) (int64, error) {
 }
 
 // Get fonts from their source and save them in the temporary directory
-func (e *Epub) writeFonts(rootEpubDir string) error {
+func (e *Book) writeFonts(rootEpubDir string) error {
 	return e.writeMedia(rootEpubDir, e.fonts, FontFolderName)
 }
 
 // Get images from their source and save them in the temporary directory
-func (e *Epub) writeImages(rootEpubDir string) error {
+func (e *Book) writeImages(rootEpubDir string) error {
 	return e.writeMedia(rootEpubDir, e.images, ImageFolderName)
 }
 
 // Get videos from their source and save them in the temporary directory
-func (e *Epub) writeVideos(rootEpubDir string) error {
+func (e *Book) writeVideos(rootEpubDir string) error {
 	return e.writeMedia(rootEpubDir, e.videos, VideoFolderName)
 }
 
 // Get media from their source and save them in the temporary directory
-func (e *Epub) writeMedia(rootEpubDir string, mediaMap map[string]string, mediaFolderName string) error {
+func (e *Book) writeMedia(rootEpubDir string, mediaMap map[string]string, mediaFolderName string) error {
 	if len(mediaMap) > 0 {
 		mediaFolderPath := filepath.Join(rootEpubDir, contentFolderName, mediaFolderName)
 		if err := filesystem.Mkdir(mediaFolderPath, dirPermissions); err != nil {
@@ -350,9 +350,9 @@ func (e *Epub) writeMedia(rootEpubDir string, mediaMap map[string]string, mediaF
 			}
 			// The cover image has a special value for the properties attribute
 			mediaProperties := ""
-			if mediaFilename == e.cover.imageFilename {
-				mediaProperties = coverImageProperties
-			}
+			//if mediaFilename == e.cover.imageFilename {
+			//	mediaProperties = coverImageProperties
+			//}
 
 			// Add the file to the OPF manifest
 			e.pkg.addToManifest(fixXMLId(mediaFilename), filepath.Join(mediaFolderName, mediaFilename), mediaType, mediaProperties)
@@ -400,46 +400,48 @@ func writeMimetype(rootEpubDir string) {
 	}
 }
 
-func (e *Epub) writePackageFile(rootEpubDir string) {
+func (e *Book) writePackageFile(rootEpubDir string) {
 	e.pkg.write(rootEpubDir)
 }
 
 // Write the section files to the temporary directory and add the sections to
 // the TOC and package files
-func (e *Epub) writeSections(rootEpubDir string) {
+func (e *Book) writeSections(rootEpubDir string) {
 	if len(e.sections) > 0 {
 		// If a cover was set, add it to the package spine first so it shows up
 		// first in the reading order
-		if e.cover.xhtmlFilename != "" {
-			e.pkg.addToSpine(e.cover.xhtmlFilename)
-		}
-
-		for i, section := range e.sections {
-			// Set the title of the cover page XHTML to the title of the EPUB
-			if section.filename == e.cover.xhtmlFilename {
-				section.xhtml.setTitle(e.Title())
+		/*
+			if e.cover.xhtmlFilename != "" {
+				e.pkg.addToSpine(e.cover.xhtmlFilename)
 			}
 
-			sectionFilePath := filepath.Join(rootEpubDir, contentFolderName, xhtmlFolderName, section.filename)
-			section.xhtml.write(sectionFilePath)
+			for i, section := range e.sections {
+				// Set the title of the cover page XHTML to the title of the EPUB
+				if section.filename == e.cover.xhtmlFilename {
+					section.xhtml.setTitle(e.Title())
+				}
 
-			relativePath := filepath.Join(xhtmlFolderName, section.filename)
-			// Don't add pages without titles or the cover to the TOC
-			if section.xhtml.Title() != "" && section.filename != e.cover.xhtmlFilename {
-				e.toc.addSection(i, section.xhtml.Title(), relativePath)
+				sectionFilePath := filepath.Join(rootEpubDir, contentFolderName, xhtmlFolderName, section.filename)
+				section.xhtml.write(sectionFilePath)
+
+				relativePath := filepath.Join(xhtmlFolderName, section.filename)
+				// Don't add pages without titles or the cover to the TOC
+				if section.xhtml.Title() != "" && section.filename != e.cover.xhtmlFilename {
+					e.toc.addSection(i, section.xhtml.Title(), relativePath)
+				}
+				// The cover page should have already been added to the spine first
+				if section.filename != e.cover.xhtmlFilename {
+					e.pkg.addToSpine(section.filename)
+				}
+				e.pkg.addToManifest(section.filename, relativePath, mediaTypeXhtml, "")
 			}
-			// The cover page should have already been added to the spine first
-			if section.filename != e.cover.xhtmlFilename {
-				e.pkg.addToSpine(section.filename)
-			}
-			e.pkg.addToManifest(section.filename, relativePath, mediaTypeXhtml, "")
-		}
+		*/
 	}
 }
 
 // Write the TOC file to the temporary directory and add the TOC entries to the
 // package file
-func (e *Epub) writeToc(rootEpubDir string) {
+func (e *Book) writeToc(rootEpubDir string) {
 	e.pkg.addToManifest(tocNavItemID, tocNavFilename, mediaTypeXhtml, tocNavItemProperties)
 	e.pkg.addToManifest(tocNcxItemID, tocNcxFilename, mediaTypeNcx, "")
 

@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/cahaba-ts/go-epub"
+	"github.com/cahaba-ts/epub"
 )
 
 func ExampleEpub_AddCSS() {
-	e := epub.NewEpub("My title")
+	e := epub.NewBook("My title")
 
 	// Add CSS
 	css1Path, err := e.AddCSS("testdata/cover.css", "epub.css")
