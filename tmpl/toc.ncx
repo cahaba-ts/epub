@@ -13,7 +13,7 @@
       </navLabel>
       <content src="text/cover.html"></content>
     </navPoint>
-    {{ range := .Chapters}}
+    {{ range .Chapters}}
     <navPoint id="{{ .NavPoint }}">
       <navLabel>
         <text>{{ .Title }}</text>

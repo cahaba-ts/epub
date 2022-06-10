@@ -1,5 +1,16 @@
 package epub
 
+import (
+	"embed"
+	"fmt"
+	"text/template"
+
+	"github.com/pkg/errors"
+)
+
+//go:embed tmpl
+var tmpl embed.FS
+
 var overrides = make(map[string][]byte)
 
 // RetrieveTemplate returns either the default template
@@ -8,7 +19,14 @@ func RetrieveTemplate(filename string) ([]byte, error) {
 	if body, ok := overrides[filename]; ok {
 		return body, nil
 	}
-	return tmpl.ReadFile(filename)
+	b, err := tmpl.ReadFile("tmpl/" + filename)
+	if err != nil {
+		return nil, errors.Wrap(
+			err,
+			"Can't find file in embed",
+		)
+	}
+	return b, nil
 }
 
 // OverrideTemplate will set a new template for the filename.
@@ -16,4 +34,19 @@ func RetrieveTemplate(filename string) ([]byte, error) {
 // cover.xhtml, main.css, toc.ncx, and toc.xhtml.
 func OverrideTemplate(filename string, content []byte) {
 	overrides[filename] = content
+}
+
+func CompileTemplate(filename string) (*template.Template, error) {
+	b, err := RetrieveTemplate(filename)
+	if err != nil {
+		return nil, err
+	}
+	t, err := template.New("cahaba").Parse(string(b))
+	if err != nil {
+		return nil, errors.Wrap(
+			err,
+			fmt.Sprintf("Compile Template (%s): ", filename),
+		)
+	}
+	return t, nil
 }

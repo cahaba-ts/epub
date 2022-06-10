@@ -9,5 +9,6 @@ require (
 )
 
 require (
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/yuin/goldmark v1.4.12 // indirect
 )

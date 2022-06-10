@@ -28,7 +28,6 @@ package epub
 import (
 	"archive/zip"
 	"bytes"
-	"embed"
 	"fmt"
 	"io"
 	"io/fs"
@@ -43,9 +42,6 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 )
-
-//go:embed tmpl/*
-var tmpl embed.FS
 
 // FilenameAlreadyUsedError is thrown by AddCSS, AddFont, AddImage, or AddSection
 // if the same filename is used more than once.
@@ -86,7 +82,6 @@ type Book struct {
 	assetLookup map[string]string
 
 	sections [3][]epubSection
-	chapters [3][]string
 
 	args *bookArgs
 }
@@ -123,7 +118,7 @@ type bookChapter struct {
 }
 type epubSection struct {
 	title string
-	parts []*xhtml
+	parts []string
 }
 
 // NewBook returns a new Epub.
@@ -144,10 +139,13 @@ func NewBook(title string) *Book {
 	}
 	e.file = zip.NewWriter(e.buf)
 
-	e.images = make(map[string]string)
-	e.imageLookup = make(map[string]string)
+	mtf, _ := e.file.Create("mimetype")
+	io.WriteString(mtf, "application/epub+zip")
+	cont, _ := e.file.Create("META-INF/container.xml")
+	b, _ := RetrieveTemplate("container.xml")
+	cont.Write(b)
 
-	e.assets = make(map[string]string)
+	e.imageLookup = make(map[string]string)
 	e.assetLookup = make(map[string]string)
 
 	return e
@@ -166,6 +164,7 @@ func (e *Book) SetCover(source string) error {
 		return err
 	}
 	e.args.Files[len(e.args.Files)-1].Properties = "cover-image"
+	return nil
 }
 
 func (e *Book) AddAsset(source, filename, mediaType string) error {
@@ -282,12 +281,7 @@ func (e *Book) addSection(priority int, title string, bodies []string) error {
 	defer e.Unlock()
 	s := epubSection{
 		title: title,
-	}
-	for _, body := range bodies {
-		x := newXhtml(body)
-		x.setTitle(title)
-		x.setXmlnsEpub(xmlnsEpub)
-		s.parts = append(s.parts, x)
+		parts: bodies,
 	}
 	e.sections[priority] = append(e.sections[priority], s)
 
