@@ -3,6 +3,7 @@ package epub
 import (
 	"embed"
 	"fmt"
+	"strings"
 	"text/template"
 
 	"github.com/pkg/errors"
@@ -41,7 +42,12 @@ func CompileTemplate(filename string) (*template.Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	t, err := template.New("cahaba").Parse(string(b))
+	t, err := template.New("cahaba").
+		Funcs(template.FuncMap{
+			"clean": func(s, cutset string) string {
+				return strings.TrimPrefix(s, cutset)
+			},
+		}).Parse(string(b))
 	if err != nil {
 		return nil, errors.Wrap(
 			err,

@@ -19,6 +19,8 @@ import (
 	"github.com/yuin/goldmark/extension"
 )
 
+var Debug = false
+
 // FilenameAlreadyUsedError is thrown by AddCSS, AddFont, AddImage, or AddSection
 // if the same filename is used more than once.
 type FilenameAlreadyUsedError struct {
@@ -100,10 +102,8 @@ func NewBook(title string) *Book {
 	e := &Book{
 		args: &bookArgs{
 			Title:          title,
-			CoverImage:     "../../defaultcover.png",
-			Cover:          "defaultcover.png",
 			Stylesheet:     "../default.css",
-			StylesheetName: "OEBPS/default.css",
+			StylesheetName: "default.css",
 			URN:            uuid.Must(uuid.NewV4()).String(),
 			CurrentDate:    time.Now().UTC().Format(time.RFC3339),
 		},
@@ -134,18 +134,6 @@ func NewBook(title string) *Book {
 		ID:        "default.css",
 		Path:      "OEBPS/default.css",
 		MediaType: "text/css",
-	})
-
-	dcf, _ := e.file.CreateHeader(&zip.FileHeader{
-		Name:   "defaultcover.png",
-		Method: zip.Store,
-	})
-	b, _ = RetrieveTemplate("defaultcover.png")
-	dcf.Write(b)
-	e.args.Files = append(e.args.Files, bookFile{
-		ID:        "defaultcover.png",
-		Path:      "defaultcover.png",
-		MediaType: "application/png",
 	})
 
 	cont, _ := e.file.CreateHeader(&zip.FileHeader{
@@ -215,6 +203,9 @@ func (e *Book) AddImage(source, filename string) error {
 	finalName = strings.ReplaceAll(finalName, " ", "_")
 	finalName = "img_" + finalName
 	e.Lock()
+	if Debug {
+		fmt.Println("Image Lookup: ", filename, "=>", finalName)
+	}
 	e.imageLookup[filename] = "../images/" + finalName
 	e.Unlock()
 	return e.addFile("OEBPS/images/"+finalName, source, mediaType)

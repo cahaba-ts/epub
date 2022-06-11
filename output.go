@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -17,6 +19,7 @@ var (
 )
 
 func (e *Book) Write(filename string) error {
+	fmt.Println("Building: ", filename)
 	// write cover.xhtml
 	err := e.execTemplate("cover.xhtml", "OEBPS/text/cover.xhtml", mtXHTML)
 	if err != nil {
@@ -44,18 +47,19 @@ func (e *Book) Write(filename string) error {
 	}
 
 	// write text/toc.html
-	if err := e.execTemplate("toc.xhtml", "nav.xhtml", mtXHTML); err != nil {
+	if err := e.execTemplate("nav.xhtml", "OEBPS/text/nav.xhtml", mtXHTML); err != nil {
 		return err
 	}
 	e.args.Files[len(e.args.Files)-1].Properties = "nav"
-	if err := e.execTemplate("toc.ncx", "OEBPS/toc.ncx", mtNCX); err != nil {
-		return err
-	}
+	//if err := e.execTemplate("toc.ncx", "OEBPS/toc.ncx", mtNCX); err != nil {
+	//	return err
+	//}
 
 	// write book.opf
 	if err := e.execTemplate("content.opf", "OEBPS/content.opf", mtOPF); err != nil {
 		return err
 	}
+	e.file.Flush()
 
 	if err := e.file.Close(); err != nil {
 		return errors.Wrap(
@@ -63,7 +67,7 @@ func (e *Book) Write(filename string) error {
 			"Close zip file",
 		)
 	}
-	f, err := os.Create(filename)
+	f, err := os.Create("temp.epub")
 	if err != nil {
 		return err
 	}
@@ -71,7 +75,34 @@ func (e *Book) Write(filename string) error {
 	if err != nil {
 		return err
 	}
-	return f.Close()
+	err = f.Close()
+	if err != nil {
+		return err
+	}
+	fmt.Println("Finalizing: ", filename)
+	cmd := exec.Command("ebook-polish", "-i", "-u", "temp.epub", filename)
+	cmd.Stderr = os.Stderr
+	err = cmd.Run()
+	if err != nil {
+		return errors.Wrap(err, "epub-polish error")
+	}
+	err = os.Remove("temp.epub")
+	if err != nil {
+		return err
+	}
+
+	pdfname := strings.TrimSuffix(filename, "epub") + "pdf"
+	fmt.Println("Building: ", pdfname)
+	cmd = exec.Command(
+		"ebook-convert", filename, pdfname,
+		"--paper-size", "a4",
+		"--pdf-page-margin-left", "40",
+		"--pdf-page-margin-right", "40",
+		"--pdf-page-margin-bottom", "40",
+		"--pdf-page-margin-top", "40",
+	)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 
 }
 
@@ -83,6 +114,9 @@ func (e *Book) execTemplate(filename, zipName, mediaType string) error {
 	id := filepath.Base(zipName)
 	if id == "toc.ncx" {
 		id = "ncx"
+	}
+	if id == "nav.xhtml" {
+		id = "nav"
 	}
 	e.args.Files = append(e.args.Files, bookFile{
 		ID:        id,
@@ -127,7 +161,7 @@ func (e *Book) buildSection(section epubSection, sectionType string) error {
 	e.args.Chapters = append(
 		e.args.Chapters,
 		bookChapter{
-			NavPoint: fmt.Sprintf("navPoint-%d", len(e.args.Chapters)+2),
+			NavPoint: fmt.Sprintf("navPoint%d", len(e.args.Chapters)+2),
 			ID:       fmt.Sprint(len(e.args.Chapters) + 1),
 			Title:    section.title,
 			Path:     "OEBPS/text/" + fmt.Sprintf(name, 0),
