@@ -3,8 +3,11 @@
 ---
 
 __The goal of this fork is to make generation of novel epubs simple.__ 
-This is not a general purpose epub library, go to bmaupin/go-epub for that. This is 
-modified for the express purpose of building novel epubs.
+
+This is not a general purpose epub library, go to bmaupin/go-epub for that.
+If you want an epub library that can pull in markdown files and push out
+novels with chapters and automatically generated tables of contents, then
+this may be what you're looking for.
 
 ### Features
 - Forked from github.com/bmaupin/go-epub, but nearly completely rewritten
