@@ -68,8 +68,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 h1 {
-    font-size: 1.6em;
+    font-size: 1.75em;
     margin-bottom: 3.2em; 
+    text-align: center;
 }
   
 .title h1 {
@@ -114,3 +115,20 @@ h6 {
     margin-left: 66pt;
 }
     
+#toc ol {
+    list-style-type: none;
+    padding-inline-start: 16px;
+}
+#toc ol li {
+    padding-bottom: 6px;
+}
+
+h1.cahaba--title {
+    text-align: center;
+    font-size: 1.75rem;
+}
+section.cahaba--chapter h1.cahaba--title {
+    text-align: left;
+    padding-top: 24px;
+    padding-left: 36px;
+}

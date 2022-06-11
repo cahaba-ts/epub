@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uuid_id">
+  <metadata xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <dc:identifier id="uuid_id">{{ .URN }}</dc:identifier>
+    <dc:language>en</dc:language>
+    <dc:title>{{ .Title }}</dc:title>
+    <dc:creator>{{ .Author }}</dc:creator>
+    {{ if .Publisher }}<dc:publisher>{{ .Publisher }}</dc:publisher>{{ end }}
+    {{ if .ReleaseDate }}<dc:date>{{ .ReleaseDate }}</dc:date>{{ end }}
+
+    <meta name="cover" content="{{ .Cover }}" />
+  </metadata>
+  <manifest>
+    {{range .Files}}
+        <item id="{{ .ID }}" href="../{{ .Path }}" media-type="{{ .MediaType }}"></item>
+    {{end}}
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="cover.xhtml"/>
+    <itemref idref="nav.xhtml"/>
+    {{range .Sections}}
+        <itemref idref="{{ .Ref }}" />
+    {{end}}
+  </spine>
+</package>

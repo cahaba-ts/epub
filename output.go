@@ -1,6 +1,7 @@
 package epub
 
 import (
+	"archive/zip"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +18,7 @@ var (
 
 func (e *Book) Write(filename string) error {
 	// write cover.xhtml
-	err := e.execTemplate("cover.xhtml", "text/cover.xhtml", mtXHTML)
+	err := e.execTemplate("cover.xhtml", "OEBPS/text/cover.xhtml", mtXHTML)
 	if err != nil {
 		return err
 	}
@@ -43,18 +44,16 @@ func (e *Book) Write(filename string) error {
 	}
 
 	// write text/toc.html
-	err = e.execTemplate("toc.xhtml", "text/toc.xhtml", mtXHTML)
-	if err != nil {
+	if err := e.execTemplate("toc.xhtml", "nav.xhtml", mtXHTML); err != nil {
 		return err
 	}
-
-	// write toc.ncx
-	if err := e.execTemplate("toc.ncx", "toc.ncx", mtNCX); err != nil {
+	e.args.Files[len(e.args.Files)-1].Properties = "nav"
+	if err := e.execTemplate("toc.ncx", "OEBPS/toc.ncx", mtNCX); err != nil {
 		return err
 	}
 
 	// write book.opf
-	if err := e.execTemplate("book.opf", "book.opf", mtOPF); err != nil {
+	if err := e.execTemplate("content.opf", "OEBPS/content.opf", mtOPF); err != nil {
 		return err
 	}
 
@@ -81,12 +80,16 @@ func (e *Book) execTemplate(filename, zipName, mediaType string) error {
 	if err != nil {
 		return err
 	}
+	id := filepath.Base(zipName)
+	if id == "toc.ncx" {
+		id = "ncx"
+	}
 	e.args.Files = append(e.args.Files, bookFile{
-		ID:        filepath.Base(zipName),
+		ID:        id,
 		Path:      zipName,
 		MediaType: mediaType,
 	})
-	buf, _ := e.file.Create("EPUB/" + zipName)
+	buf, _ := e.file.Create(zipName)
 	err = tt.Execute(buf, e.args)
 	if err != nil {
 		return errors.Wrap(
@@ -103,6 +106,7 @@ type chapterArgs struct {
 	Stylesheet string
 	ID         string
 	Content    string
+	Header     bool
 }
 
 func (e *Book) buildSection(section epubSection, sectionType string) error {
@@ -126,7 +130,7 @@ func (e *Book) buildSection(section epubSection, sectionType string) error {
 			NavPoint: fmt.Sprintf("navPoint-%d", len(e.args.Chapters)+2),
 			ID:       fmt.Sprint(len(e.args.Chapters) + 1),
 			Title:    section.title,
-			Path:     "text/" + fmt.Sprintf(name, 0),
+			Path:     "OEBPS/text/" + fmt.Sprintf(name, 0),
 			Type:     sectionType,
 		},
 	)
@@ -134,13 +138,18 @@ func (e *Book) buildSection(section epubSection, sectionType string) error {
 	for i, part := range section.parts {
 		chap.ID = fmt.Sprintf(name, i)
 		chap.Content = part
+		chap.Header = i == 0
 
 		e.args.Files = append(e.args.Files, bookFile{
 			ID:        chap.ID,
-			Path:      "text/" + chap.ID,
+			Path:      "OEBPS/text/" + chap.ID,
 			MediaType: mtXHTML,
 		})
-		buf, _ := e.file.Create("EPUB/text/" + chap.ID)
+		e.args.Sections = append(e.args.Sections, bookSection{Ref: chap.ID})
+		buf, _ := e.file.CreateHeader(&zip.FileHeader{
+			Name:   "OEBPS/text/" + chap.ID,
+			Method: zip.Store,
+		})
 		err := tt.Execute(buf, chap)
 		if err != nil {
 			return errors.Wrap(

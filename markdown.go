@@ -38,7 +38,6 @@ func (e *Book) renderMarkdown(content string) ([]string, error) {
 			goldmark.WithExtensions(e.exts...),
 			goldmark.WithExtensions(shortcode.Extension),
 			goldmark.WithRendererOptions(
-				html.WithHardWraps(),
 				html.WithXHTML(),
 			),
 		)
@@ -54,10 +53,10 @@ func (e *Book) renderMarkdown(content string) ([]string, error) {
 
 	// must break into multiple sections
 	if !strings.Contains(buf.String(), "<!-- PAGE BREAK -->") {
-		return []string{content}, nil
+		return []string{buf.String()}, nil
 	}
 
-	parts := strings.Split(content, "<!-- PAGE BREAK -->")
+	parts := strings.Split(buf.String(), "<!-- PAGE BREAK -->")
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 		parts[i] = strings.TrimSuffix(parts[i], "<p>")

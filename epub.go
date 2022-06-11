@@ -1,28 +1,3 @@
-/*
-Package epub generates valid EPUB 3.0 files with additional EPUB 2.0 table of
-contents (as seen here: https://github.com/bmaupin/epub-samples) for maximum
-compatibility.
-
-Basic usage:
-
-	// Create a new EPUB
-	e := epub.NewEpub("My title")
-
-	// Set the author
-	e.SetAuthor("Hingle McCringleberry")
-
-	// Add a section
-	section1Body := `<h1>Section 1</h1>
-	<p>This is a paragraph.</p>`
-	e.AddSection(section1Body, "Section 1", "", "")
-
-	// Write the EPUB
-	err = e.Write("My EPUB.epub")
-	if err != nil {
-		// handle error
-	}
-
-*/
 package epub
 
 import (
@@ -31,14 +6,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
-	// TODO: Eventually this should include the major version (e.g. github.com/gofrs/uuid/v3) but that would break
-	// compatibility with Go < 1.9 (https://github.com/golang/go/wiki/Modules#semantic-import-versioning)
 	"github.com/gofrs/uuid"
+	"github.com/pkg/errors"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 )
@@ -64,10 +40,6 @@ func (e *FileRetrievalError) Error() string {
 	return fmt.Sprintf("Error retrieving %q from source: %+v", e.Source, e.Err)
 }
 
-const (
-	urnUUIDPrefix = "urn:uuid:"
-)
-
 // Epub implements an EPUB file.
 type Book struct {
 	sync.Mutex
@@ -87,18 +59,20 @@ type Book struct {
 }
 
 type bookArgs struct {
-	Title       string
-	Description string
-	Stylesheet  string
-	CoverImage  string
-	Cover       string
-	URN         string
-	Author      string
-	Publisher   string
-	ReleaseDate string
-	Files       []bookFile
-	Sections    []bookSection
-	Chapters    []bookChapter
+	Title          string
+	Description    string
+	Stylesheet     string
+	StylesheetName string
+	CoverImage     string
+	Cover          string
+	URN            string
+	Author         string
+	Publisher      string
+	ReleaseDate    string
+	CurrentDate    string
+	Files          []bookFile
+	Sections       []bookSection
+	Chapters       []bookChapter
 }
 type bookFile struct {
 	ID         string
@@ -125,10 +99,13 @@ type epubSection struct {
 func NewBook(title string) *Book {
 	e := &Book{
 		args: &bookArgs{
-			Title:      title,
-			CoverImage: "../images/defaultcover.png",
-			Cover:      "defaultcover.png",
-			URN:        urnUUIDPrefix + uuid.Must(uuid.NewV4()).String(),
+			Title:          title,
+			CoverImage:     "../../defaultcover.png",
+			Cover:          "defaultcover.png",
+			Stylesheet:     "../default.css",
+			StylesheetName: "OEBPS/default.css",
+			URN:            uuid.Must(uuid.NewV4()).String(),
+			CurrentDate:    time.Now().UTC().Format(time.RFC3339),
 		},
 		buf: &bytes.Buffer{},
 		exts: []goldmark.Extender{
@@ -139,10 +116,43 @@ func NewBook(title string) *Book {
 	}
 	e.file = zip.NewWriter(e.buf)
 
-	mtf, _ := e.file.Create("mimetype")
+	mtf, _ := e.file.CreateHeader(&zip.FileHeader{
+		Name:   "mimetype",
+		Method: zip.Store,
+	})
 	io.WriteString(mtf, "application/epub+zip")
-	cont, _ := e.file.Create("META-INF/container.xml")
-	b, _ := RetrieveTemplate("container.xml")
+
+	dsf, _ := e.file.CreateHeader(&zip.FileHeader{
+		Name:   "OEBPS/default.css",
+		Method: zip.Store,
+	})
+	b, _ := RetrieveTemplate("default.css")
+	if _, err := dsf.Write(b); err != nil {
+		log.Fatal("Write CSS: ", err)
+	}
+	e.args.Files = append(e.args.Files, bookFile{
+		ID:        "default.css",
+		Path:      "OEBPS/default.css",
+		MediaType: "text/css",
+	})
+
+	dcf, _ := e.file.CreateHeader(&zip.FileHeader{
+		Name:   "defaultcover.png",
+		Method: zip.Store,
+	})
+	b, _ = RetrieveTemplate("defaultcover.png")
+	dcf.Write(b)
+	e.args.Files = append(e.args.Files, bookFile{
+		ID:        "defaultcover.png",
+		Path:      "defaultcover.png",
+		MediaType: "application/png",
+	})
+
+	cont, _ := e.file.CreateHeader(&zip.FileHeader{
+		Name:   "META-INF/container.xml",
+		Method: zip.Store,
+	})
+	b, _ = RetrieveTemplate("container.xml")
 	cont.Write(b)
 
 	e.imageLookup = make(map[string]string)
@@ -154,15 +164,27 @@ func NewBook(title string) *Book {
 // SetCSS will set the CSS file for the book. It is not
 // recommended to call this more than once for a book.
 func (e *Book) SetCSS(source string) error {
-	return e.addFile("css/main.css", source, "text/css")
+	err := e.addFile("stylesheet.css", source, "text/css")
+	if err != nil {
+		return errors.Wrap(
+			err,
+			"Add CSS",
+		)
+	}
+	e.args.Stylesheet = "../../stylesheet.css"
+	e.args.StylesheetName = "stylesheet.css"
+	return nil
 }
 
 func (e *Book) SetCover(source string) error {
 	ext := filepath.Ext(source)
-	err := e.addFile("images/cover"+ext, source, ImageMediaTypes[ext])
+	err := e.AddImage(source, "cover"+ext)
 	if err != nil {
 		return err
 	}
+	e.args.Cover = "OEBPS/images/img_cover" + ext
+	e.args.CoverImage = "../images/img_cover" + ext
+
 	e.args.Files[len(e.args.Files)-1].Properties = "cover-image"
 	return nil
 }
@@ -171,7 +193,7 @@ func (e *Book) AddAsset(source, filename, mediaType string) error {
 	e.Lock()
 	e.assetLookup[filename] = "../assets/" + filename
 	e.Unlock()
-	return e.addFile("assets/"+filename, source, mediaType)
+	return e.addFile("OEBPS/assets/"+filename, source, mediaType)
 }
 
 var ImageMediaTypes = map[string]string{
@@ -188,10 +210,14 @@ var ImageMediaTypes = map[string]string{
 
 func (e *Book) AddImage(source, filename string) error {
 	mediaType := ImageMediaTypes[filepath.Ext(source)]
+
+	finalName := strings.ReplaceAll(filename, "/", "_")
+	finalName = strings.ReplaceAll(finalName, " ", "_")
+	finalName = "img_" + finalName
 	e.Lock()
-	e.imageLookup[filename] = "../images/" + filename
+	e.imageLookup[filename] = "../images/" + finalName
 	e.Unlock()
-	return e.addFile("images/"+filename, source, mediaType)
+	return e.addFile("OEBPS/images/"+finalName, source, mediaType)
 }
 
 func (e *Book) AddImageFolder(source string) error {
@@ -206,9 +232,13 @@ func (e *Book) AddImageFolder(source string) error {
 }
 
 func (e *Book) addFile(zipPath, filePath, mediaType string) error {
+	zipPath = strings.ReplaceAll(zipPath, " ", "_")
 	e.Lock()
 	defer e.Unlock()
-	w, err := e.file.Create("EPUB/" + zipPath)
+	w, err := e.file.CreateHeader(&zip.FileHeader{
+		Name:   zipPath,
+		Method: zip.Store,
+	})
 	if err != nil {
 		return err
 	}
@@ -217,7 +247,8 @@ func (e *Book) addFile(zipPath, filePath, mediaType string) error {
 		return err
 	}
 	_, err = io.Copy(w, f)
-	if err != io.EOF {
+	if err != nil && err != io.EOF {
+		fmt.Println(err)
 		return err
 	}
 	f.Close()
