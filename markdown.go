@@ -57,10 +57,16 @@ func (e *Book) renderMarkdown(content string) ([]string, error) {
 	}
 
 	parts := strings.Split(buf.String(), "<!-- PAGE BREAK -->")
+	good := []string{}
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 		parts[i] = strings.TrimSuffix(parts[i], "<p>")
 		parts[i] = strings.TrimPrefix(parts[i], "</p>")
+		parts[i] = strings.TrimSpace(parts[i])
+		if parts[i] != "" {
+			good = append(good, parts[i])
+		}
 	}
-	return parts, nil
+
+	return good, nil
 }
