@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -86,24 +85,7 @@ func (e *Book) Write(filename string) error {
 	if err != nil {
 		return errors.Wrap(err, "epub-polish error")
 	}
-	err = os.Remove("temp.epub")
-	if err != nil {
-		return err
-	}
-
-	pdfname := strings.TrimSuffix(filename, "epub") + "pdf"
-	fmt.Println("Building: ", pdfname)
-	cmd = exec.Command(
-		"ebook-convert", filename, pdfname,
-		"--paper-size", "a4",
-		"--pdf-page-margin-left", "40",
-		"--pdf-page-margin-right", "40",
-		"--pdf-page-margin-bottom", "40",
-		"--pdf-page-margin-top", "40",
-	)
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-
+	return os.Remove("temp.epub")
 }
 
 func (e *Book) execTemplate(filename, zipName, mediaType string) error {

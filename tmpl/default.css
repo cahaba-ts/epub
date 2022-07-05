@@ -98,36 +98,36 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 h1 {
-    font-size: 1.75em;
-    margin-bottom: 3.2em; 
+    font-size: 3em;
+    margin-bottom: 2em; 
     text-align: center;
 }
   
 .title h1 {
     margin-bottom: 0px;
-    margin-top: 3.2em; 
+    margin-top: 2em; 
 }
   
 h2 {
-    font-size: 1em;
+    font-size: 2.4em;
     margin-top: 0.5em;
     margin-bottom: 0.5em; 
 }
   
 h3 {
-    font-size: 0.625em; 
+    font-size: 2em; 
 }
   
 h4 {
-    font-size: 0.391em; 
+    font-size: 1.75em; 
 }
   
 h5 {
-    font-size: 0.244em; 
+    font-size: 1.5em; 
 }
   
 h6 {
-    font-size: 0.153em; 
+    font-size: 1.2em; 
 }
 .cahaba--main { 
     font-weight: normal; 
@@ -161,4 +161,16 @@ section.cahaba--chapter h1.cahaba--title {
     text-align: left;
     padding-top: 24px;
     padding-left: 36px;
+}
+.spacer {
+    height: 28px;
+}
+.bigspacer {
+    padding: 1em;
+    text-align: center;
+}
+.cahaba--separator {
+    height: 1.5em;
+    box-shadow: none;
+    -webkit-box-shadow: none;
 }
